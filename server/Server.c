@@ -11,7 +11,7 @@
 #pragma comment(lib, "Ws2_32.lib")
 
 #define PORT "80"
-#define BACKLOG 10
+#define BACKLOG 15
 #define MAX_REQ_SIZE 1024
 #define ROOT "C:\\Users\\yoava\\Downloads\\free_robux"
 #define GET "GET"
@@ -25,6 +25,7 @@
 #define CLENsize 16
 #define RN "\r\n"
 #define RNsize 2
+#define READ_SIZE 2048
 
 typedef struct client {
 
@@ -34,7 +35,7 @@ typedef struct client {
 
 char* getReqMethod(char* req, int* index) {
 	*index = 0;
-	char method[10] = { 0 };
+	char method[30] = { 0 };
 
 	while (req[*index] != ' ') {
 		method[*index] = req[*index];
@@ -47,7 +48,6 @@ char* getReqService(char* req) {
 
 	char service[MAX_REQ_SIZE] = { 0 };
 	int i = 0;
-
 	while (req[i] != ' ') {
 		if (req[i] == '/')	service[i] = '\\';
 		else service[i] = req[i];
@@ -90,6 +90,7 @@ char* getContentTypeByExtension(char* extension) {
 	if (!strcmp(extension, "txt")) return "text/plain";
 	if (!strcmp(extension, "webp")) return "image/webp";
 	if (!strcmp(extension, "zip")) return "application/zip";
+
 	return "*/*";
 
 }
@@ -111,7 +112,7 @@ void* client_handler(void* data) {
 	char* response; // the first response to the client, including the headers and such things.
 	char* contentType; // the type of content requested by the client.
 	char* extension; // the extension representing the content requested by the client.
-	char* fBuffer; // a buffer to hold the file requested by the client. Also used to send the file separate from the headers.
+	char fBuffer[READ_SIZE] = { 0 }; // a buffer to hold the file requested by the client. Also used to send the file separate from the headers.
 
 	int finalSize = 0; //the size of everything together.
 	int fSizeSize = 0; //size of the string.
@@ -120,8 +121,9 @@ void* client_handler(void* data) {
 	int serviceIndex = 0; // used in getReqMethod. Signifies the start of the service.
 	int fSize = 0; // file size
 
-	if ((valread = recv(client->socket, buffer, MAX_REQ_SIZE - 1, 0)) <= 0) { //receive from client
+	if ((valread = recv(client->socket, buffer, MAX_REQ_SIZE - 1, 0)) < 0) { //receive from client
 		end_function(client, "RECV FUCKED");
+		fprintf(stdout, "%d\n", valread);
 		ExitThread(1);
 	}
 	method = getReqMethod(buffer, &serviceIndex); // get method from the request.
@@ -131,29 +133,16 @@ void* client_handler(void* data) {
 	}
 	service = getReqService(buffer + serviceIndex + 1); // add serviceIndex to buffer in order to skip the method and get the service.
 	strcat(path, service); // add the requested service to the root path.
-
-	fp = fopen(path, "r"); // open the file requested.
+	fprintf(stdout, "%s\n", path);
+	fp = fopen(path, "rb"); // open the file requested.
 	if (fp <= 2) { // validate file pointer.
 		end_function(client, "FILE IS FUCKED");
 		ExitThread(1);
 	}
 
 	fseek(fp, 0, SEEK_END); // go to end of file.
-	fSize = ftell(fp); // get size of file.
+	fSize = ftell(fp); // compare value of beginning and end of file to get the size.
 	fseek(fp, 0, SEEK_SET); // go back to start of file.
-
-	if ((fBuffer = (char*)malloc(fSize)) == NULL) { // create buffer for file.
-		end_function(client, "MALLOC FUCKED");
-		ExitThread(1);
-	}
-	fread(fBuffer, sizeof(char), fSize, fp); // read the file into response.
-	while (fBuffer[fSize - 1] < 0) { // get rid of any EOFs.
-		fSize--;
-	}
-	if (realloc(fBuffer, fSize) == NULL) { //validate realloc
-		end_function(client, "REALLOC FUCKED");
-		ExitThread(1);
-	}
 
 	extension = getFileExtension(path); // get the extension from the requested service.
 	contentType = getContentTypeByExtension(extension); // get the appropriate content-type response according to the file extension.
@@ -178,9 +167,13 @@ void* client_handler(void* data) {
 	}
 
 	send(client->socket, response, finalSize, 0); // SEND to client the header response
-	send(client->socket, fBuffer, fSize, 0); // SEND to client the file response
 
-	free(fBuffer);
+	while ((valread = fread(fBuffer, sizeof(char), READ_SIZE, fp)) > 0) {
+
+		send(client->socket, fBuffer, valread, 0); // SEND to client the file in fragments.
+		//fprintf(stdout, "FROM %d SENDING %d\n", client->socket, valread);
+	}
+
 	free(response);
 	free(extension);
 	end_function(client, "\nGOOD JOB!!!!");
@@ -197,7 +190,6 @@ int main(int argc, char** argv) {
 
 	SOCKET server_socket; // socket for the server.
 	struct addrinfo* server_addr = NULL, // the server's address info struct, that holds all info about the address.
-		* ptr = NULL,
 		hints; // used to set the socket's behavior and address.
 
 	ZeroMemory(&hints, sizeof(hints));
@@ -242,11 +234,12 @@ int main(int argc, char** argv) {
 		client_t client;
 		SOCKET client_socket;
 		if ((client_socket = accept(server_socket, NULL, NULL)) != INVALID_SOCKET) {
+
+			fprintf(stdout, "NEW CLIENT!!!  :%d\n", client_socket);;
 			client.socket = client_socket;
-			HANDLE thread = CreateThread(NULL, 0, client_handler, (void*)&client, 0, NULL);
+			CreateThread(NULL, 0, client_handler, (void*)&client, 0, NULL);
 
 		}
-		fprintf(stdout, "%d\n", WSAGetLastError());
 
 	}
 
