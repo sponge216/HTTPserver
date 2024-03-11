@@ -199,9 +199,9 @@ int main(int argc, char** argv) {
 	hints.ai_flags = AI_PASSIVE;
 
 	// Resolve the local address and port to be used by the server
-	int iResult = getaddrinfo(NULL, PORT, &hints, &server_addr);
-	if (iResult != 0) {
-		printf("getaddrinfo failed: %d\n", iResult);
+	int res = getaddrinfo(NULL, PORT, &hints, &server_addr);
+	if (res != 0) {
+		printf("getaddrinfo failed: %d\n", res);
 		WSACleanup();
 		exit(1);
 	}
