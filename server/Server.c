@@ -4,7 +4,7 @@
 #include <WinSock2.h>
 #include <WS2tcpip.h>
 #include <string.h>
-#include <windows.h>
+#include <processthreadsapi.h>
 #include <dbnetlib.h>
 #include <math.h>
 
@@ -27,12 +27,14 @@
 #define RNsize 2
 #define READ_SIZE 2048
 
+//holds all client related data.
 typedef struct client {
 
 	SOCKET socket;
 
 }client_t, * clientPtr;
 
+//get the request's method.
 char* getReqMethod(char* req, int* index) {
 	*index = 0;
 	char method[30] = { 0 };
@@ -43,7 +45,7 @@ char* getReqMethod(char* req, int* index) {
 	}
 	return method;
 }
-
+//get the requested file's path.
 char* getReqService(char* req) {
 
 	char service[MAX_REQ_SIZE] = { 0 };
@@ -56,6 +58,7 @@ char* getReqService(char* req) {
 	return service;
 
 }
+//get the requested file's extension.
 char* getFileExtension(char* path) {
 	int pSize = strlen(path);
 	int psTemp = pSize;
@@ -73,6 +76,7 @@ char* getFileExtension(char* path) {
 	extension[i] = '\0';// since we malloced, we need to add \0 to the end of the string.
 	return extension;
 }
+//gets the content-type according to the file's extension.
 char* getContentTypeByExtension(char* extension) {
 	if (!strcmp(extension, "css")) return "text/css";
 	if (!strcmp(extension, "csv")) return "text/csv";
@@ -94,16 +98,21 @@ char* getContentTypeByExtension(char* extension) {
 	return "*/*";
 
 }
-void end_function(clientPtr client, char* msg) {
+
+//closes all relevant connections and frees malloced variables.
+void end_function(clientPtr client, char* msg, FILE* fp) {
 	perror(msg);
+	if (fp) fclose(fp);
 	closesocket(client->socket);
+	free(client);
 }
+//function that handles the client and it's requests.
 void* client_handler(void* data) {
 
 	fprintf(stdout, "IN THREAD\n");
 
 	clientPtr client = (clientPtr)data;
-	FILE* fp;
+	FILE* fp = NULL;
 
 	char buffer[MAX_REQ_SIZE] = { 0 }; // a buffer to hold the received request from the client
 	char* method; // the request's method
@@ -114,30 +123,36 @@ void* client_handler(void* data) {
 	char* extension; // the extension representing the content requested by the client.
 	char fBuffer[READ_SIZE] = { 0 }; // a buffer to hold the file requested by the client. Also used to send the file separate from the headers.
 
-	int finalSize = 0; //the size of everything together.
+	int finalSize = 0; //the size of everything except the file.
 	int fSizeSize = 0; //size of the string.
 	int contentTypeLen = 0; // length of contentType.
 	int valread = 0; // used to store values from read/recv functions.
 	int serviceIndex = 0; // used in getReqMethod. Signifies the start of the service.
 	int fSize = 0; // file size
 
-	if ((valread = recv(client->socket, buffer, MAX_REQ_SIZE - 1, 0)) < 0) { //receive from client
-		end_function(client, "RECV FUCKED");
+	if ((valread = recv(client->socket, buffer, MAX_REQ_SIZE - 1, 0)) <= 0) { //receive from client
+		end_function(client, "RECV FUCKED", fp);
 		fprintf(stdout, "%d\n", valread);
 		ExitThread(1);
+		return NULL;
+
 	}
 	method = getReqMethod(buffer, &serviceIndex); // get method from the request.
 	if (strcmp(method, GET)) { // validate method
-		end_function(client, "GET FUCKED");
+		end_function(client, "GET FUCKED", fp);
 		ExitThread(1);
+		return NULL;
+
 	}
 	service = getReqService(buffer + serviceIndex + 1); // add serviceIndex to buffer in order to skip the method and get the service.
 	strcat(path, service); // add the requested service to the root path.
 	fprintf(stdout, "%s\n", path);
 	fp = fopen(path, "rb"); // open the file requested.
 	if (fp <= 2) { // validate file pointer.
-		end_function(client, "FILE IS FUCKED");
+		end_function(client, "FILE IS FUCKED", fp);
 		ExitThread(1);
+		return NULL;
+
 	}
 
 	fseek(fp, 0, SEEK_END); // go to end of file.
@@ -152,16 +167,20 @@ void* client_handler(void* data) {
 	if (contentType[0] == 't') { // if content-type starts with "text", we need to include CHARSET.
 		finalSize = OKsize + CTsize + contentTypeLen + CHARSETsize + CLENsize + fSizeSize + 3 * RNsize; // calculate the combined size of all variables.
 		if ((response = (char*)malloc(finalSize + 1)) == NULL) { // malloc for response.
-			end_function(client, "MALLOC FUCKED");
+			end_function(client, "MALLOC FUCKED", fp);
 			ExitThread(1);
+			return NULL;
+
 		}
 		sprintf(response, "%s%s%s%s%s%s%d%s%s", OK, CONTENT_TYPE, contentType, CHARSET, RN, CONTENT_LENGTH, fSize, RN, RN); //load the needed text into response
 	}
 	else {// if "text" isnt in content-type
 		finalSize = OKsize + CTsize + contentTypeLen + CLENsize + fSizeSize + 3 * RNsize; // calculate the combined size of all variables.
 		if ((response = (char*)malloc(finalSize + 1)) == NULL) { // malloc for response.
-			end_function(client, "MALLOC FUCKED");
+			end_function(client, "MALLOC FUCKED", fp);
 			ExitThread(1);
+			return NULL;
+
 		}
 		sprintf(response, "%s%s%s%s%s%d%s%s", OK, CONTENT_TYPE, contentType, RN, CONTENT_LENGTH, fSize, RN, RN); //load the needed text into response
 	}
@@ -170,13 +189,17 @@ void* client_handler(void* data) {
 
 	while ((valread = fread(fBuffer, sizeof(char), READ_SIZE, fp)) > 0) {
 
-		send(client->socket, fBuffer, valread, 0); // SEND to client the file in fragments.
-		//fprintf(stdout, "FROM %d SENDING %d\n", client->socket, valread);
+		if (send(client->socket, fBuffer, valread, 0) == -1) {// SEND to client the file in fragments.
+			end_function(client->socket, "SEND FUCKED", fp);
+			ExitThread(1);
+			return NULL;
+		}
+
 	}
 
 	free(response);
 	free(extension);
-	end_function(client, "\nGOOD JOB!!!!");
+	end_function(client, "\nGOOD JOB!!!!", fp);
 	ExitThread(1);
 	return NULL;
 }
@@ -231,13 +254,20 @@ int main(int argc, char** argv) {
 	}
 	while (1) {
 
-		client_t client;
 		SOCKET client_socket;
+
 		if ((client_socket = accept(server_socket, NULL, NULL)) != INVALID_SOCKET) {
 
-			fprintf(stdout, "NEW CLIENT!!!  :%d\n", client_socket);;
-			client.socket = client_socket;
-			CreateThread(NULL, 0, client_handler, (void*)&client, 0, NULL);
+			clientPtr client = (clientPtr)malloc(sizeof(client_t));
+			if (!client) { // validate malloc.
+				perror("MALLOC FUCKED!");
+				continue;
+			}
+			fprintf(stdout, "NEW CLIENT!!!  :%llu\n", client_socket);
+			client->socket = client_socket;
+			if (!(CreateThread(NULL, 0, client_handler, (void*)client, 0, NULL))) {
+				fprintf(stdout, "THREAD FAILED\n");
+			}
 
 		}
 
