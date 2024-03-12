@@ -5,7 +5,6 @@
 #include <WS2tcpip.h>
 #include <string.h>
 #include <processthreadsapi.h>
-#include <dbnetlib.h>
 #include <math.h>
 
 #pragma comment(lib, "Ws2_32.lib")
@@ -96,6 +95,9 @@ char* getContentTypeByExtension(char* extension) {
 	if (!strcmp(extension, "txt")) return "text/plain";
 	if (!strcmp(extension, "webp")) return "image/webp";
 	if (!strcmp(extension, "zip")) return "application/zip";
+	if (!strcmp(extension, "mp3")) return "audio/mpeg";
+	if (!strcmp(extension, "mp4")) return "video/m4";
+	if (!strcmp(extension, "mpeg")) return "video/mpeg";
 
 	return "*/*";
 
