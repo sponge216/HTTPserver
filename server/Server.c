@@ -16,6 +16,9 @@
 #define ROOT "C:\\Users\\yoava\\Downloads\\free_robux"
 #define GET "GET"
 #define OK "HTTP/1.1 200 OK\r\n"
+#define NOT_FOUND_PATH "C:\\Users\\yoava\\source\\repos\\HTTPserver\\server\\not_found.html"
+#define NOT_FOUND "HTTP/1.1 404 Not Found\r\n"
+#define NOT_FOUND_SIZE 24
 #define OKsize 17
 #define CONTENT_TYPE "Content-type: "
 #define CTsize 14
@@ -26,6 +29,7 @@
 #define RN "\r\n"
 #define RNsize 2
 #define READ_SIZE 2048
+#define INDEX_HTML "index.html"
 
 //holds all client related data.
 typedef struct client {
@@ -35,9 +39,8 @@ typedef struct client {
 }client_t, * clientPtr;
 
 //get the request's method.
-char* getReqMethod(char* req, int* index) {
+char* getReqMethod(char* req, char* method, int* index) {
 	*index = 0;
-	char method[30] = { 0 };
 
 	while (req[*index] != ' ') {
 		method[*index] = req[*index];
@@ -46,9 +49,8 @@ char* getReqMethod(char* req, int* index) {
 	return method;
 }
 //get the requested file's path.
-char* getReqService(char* req) {
+char* getReqService(char* req, char* service) {
 
-	char service[MAX_REQ_SIZE] = { 0 };
 	int i = 0;
 	while (req[i] != ' ') {
 		if (req[i] == '/')	service[i] = '\\';
@@ -100,11 +102,10 @@ char* getContentTypeByExtension(char* extension) {
 }
 
 //closes all relevant connections and frees malloced variables.
-void end_function(clientPtr client, char* msg, FILE* fp) {
+void end_function(SOCKET socket, char* msg, FILE* fp) {
 	perror(msg);
 	if (fp) fclose(fp);
-	closesocket(client->socket);
-	free(client);
+	closesocket(socket);
 }
 //function that handles the client and it's requests.
 void* client_handler(void* data) {
@@ -113,10 +114,11 @@ void* client_handler(void* data) {
 
 	clientPtr client = (clientPtr)data;
 	FILE* fp = NULL;
-
+	SOCKET socket = client->socket;
+	free(client);
 	char buffer[MAX_REQ_SIZE] = { 0 }; // a buffer to hold the received request from the client
-	char* method; // the request's method
-	char* service; // the requested file
+	char* method[30] = { 0 }; // the request's method
+	char service[MAX_REQ_SIZE] = { 0 }; // the requested file
 	char path[MAX_REQ_SIZE] = ROOT; // the root dir where we store files we want clients to reach
 	char* response; // the first response to the client, including the headers and such things.
 	char* contentType; // the type of content requested by the client.
@@ -130,26 +132,65 @@ void* client_handler(void* data) {
 	int serviceIndex = 0; // used in getReqMethod. Signifies the start of the service.
 	int fSize = 0; // file size
 
-	if ((valread = recv(client->socket, buffer, MAX_REQ_SIZE - 1, 0)) <= 0) { //receive from client
+	if ((valread = recv(socket, buffer, MAX_REQ_SIZE - 1, 0)) <= 0) { //receive from client
 		end_function(client, "RECV FUCKED", fp);
 		fprintf(stdout, "%d\n", valread);
 		ExitThread(1);
 		return NULL;
 
 	}
-	method = getReqMethod(buffer, &serviceIndex); // get method from the request.
+
+	getReqMethod(buffer, method, &serviceIndex); // get method from the request.
 	if (strcmp(method, GET)) { // validate method
 		end_function(client, "GET FUCKED", fp);
 		ExitThread(1);
 		return NULL;
 
 	}
-	service = getReqService(buffer + serviceIndex + 1); // add serviceIndex to buffer in order to skip the method and get the service.
+
+	getReqService(buffer + serviceIndex + 1, service); // add serviceIndex to buffer in order to skip the method and get the service.
+
+	if (service[strlen(service) - 1] == '\\') { //if the request doesnt end with a file, we send index.html.
+		strcat(service, INDEX_HTML);
+	}
+
 	strcat(path, service); // add the requested service to the root path.
 	fprintf(stdout, "%s\n", path);
 	fp = fopen(path, "rb"); // open the file requested.
-	if (fp <= 2) { // validate file pointer.
-		end_function(client, "FILE IS FUCKED", fp);
+	if (fp <= 2) { // if file not found, send 404 error.
+
+		fp = fopen(NOT_FOUND_PATH, "rb");
+		fseek(fp, 0, SEEK_END); // go to end of file.
+		fSize = ftell(fp); // compare value of beginning and end of file to get the size.
+		fseek(fp, 0, SEEK_SET); // go back to start of file.
+
+		contentType = getContentTypeByExtension("html"); // get the appropriate content-type response according to the file extension.
+		contentTypeLen = strlen(contentType);
+		fSizeSize = (int)(log10((double)fSize) + 1); // get length of fSize
+		finalSize = NOT_FOUND_SIZE + CTsize + contentTypeLen + CHARSETsize + CLENsize + fSizeSize + 3 * RNsize; // calculate the combined size of all variables.
+
+		if ((response = (char*)malloc(finalSize + 1)) == NULL) { // malloc for response.
+			end_function(socket, "MALLOC FUCKED", fp);
+			ExitThread(1);
+			return NULL;
+
+		}
+		sprintf(response, "%s%s%s%s%s%s%d%s%s", NOT_FOUND, CONTENT_TYPE, contentType, CHARSET, RN, CONTENT_LENGTH, fSize, RN, RN); //load the needed text into response
+
+		send(socket, response, finalSize, 0); // SEND to client the header response
+		while ((valread = fread(fBuffer, sizeof(char), READ_SIZE, fp)) > 0) {
+
+			if (send(socket, fBuffer, valread, 0) == -1) {// SEND to client the file in fragments.
+				free(response);
+				end_function(socket, "SEND FUCKED", fp);
+				ExitThread(1);
+				return NULL;
+			}
+
+		}
+
+		free(response);
+		end_function(socket, "FILE IS FUCKED SENDING 404", fp);
 		ExitThread(1);
 		return NULL;
 
@@ -167,7 +208,7 @@ void* client_handler(void* data) {
 	if (contentType[0] == 't') { // if content-type starts with "text", we need to include CHARSET.
 		finalSize = OKsize + CTsize + contentTypeLen + CHARSETsize + CLENsize + fSizeSize + 3 * RNsize; // calculate the combined size of all variables.
 		if ((response = (char*)malloc(finalSize + 1)) == NULL) { // malloc for response.
-			end_function(client, "MALLOC FUCKED", fp);
+			end_function(socket, "MALLOC FUCKED", fp);
 			ExitThread(1);
 			return NULL;
 
@@ -177,7 +218,7 @@ void* client_handler(void* data) {
 	else {// if "text" isnt in content-type
 		finalSize = OKsize + CTsize + contentTypeLen + CLENsize + fSizeSize + 3 * RNsize; // calculate the combined size of all variables.
 		if ((response = (char*)malloc(finalSize + 1)) == NULL) { // malloc for response.
-			end_function(client, "MALLOC FUCKED", fp);
+			end_function(socket, "MALLOC FUCKED", fp);
 			ExitThread(1);
 			return NULL;
 
@@ -185,12 +226,14 @@ void* client_handler(void* data) {
 		sprintf(response, "%s%s%s%s%s%d%s%s", OK, CONTENT_TYPE, contentType, RN, CONTENT_LENGTH, fSize, RN, RN); //load the needed text into response
 	}
 
-	send(client->socket, response, finalSize, 0); // SEND to client the header response
+	send(socket, response, finalSize, 0); // SEND to client the header response
 
 	while ((valread = fread(fBuffer, sizeof(char), READ_SIZE, fp)) > 0) {
 
-		if (send(client->socket, fBuffer, valread, 0) == -1) {// SEND to client the file in fragments.
-			end_function(client->socket, "SEND FUCKED", fp);
+		if (send(socket, fBuffer, valread, 0) == -1) {// SEND to client the file in fragments.
+			free(response);
+			free(extension);
+			end_function(socket, "SEND FUCKED", fp);
 			ExitThread(1);
 			return NULL;
 		}
@@ -199,7 +242,7 @@ void* client_handler(void* data) {
 
 	free(response);
 	free(extension);
-	end_function(client, "\nGOOD JOB!!!!", fp);
+	end_function(socket, "\nGOOD JOB!!!!", fp);
 	ExitThread(1);
 	return NULL;
 }
