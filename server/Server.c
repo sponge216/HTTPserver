@@ -4,7 +4,7 @@
 #include <WinSock2.h>
 #include <WS2tcpip.h>
 #include <string.h>
-#include <processthreadsapi.h>
+#include <processthreadsapi.h>   
 #include <math.h>
 
 #pragma comment(lib, "Ws2_32.lib")
@@ -12,7 +12,7 @@
 #define PORT "80"
 #define BACKLOG 15
 #define MAX_REQ_SIZE 1024
-#define ROOT "C:\\Users\\yoava\\Downloads\\free_robux"
+#define ROOT "C:\\Users\\yoava\\Downloads\\httpServerFolder"
 
 #define GET "GET"
 #define OK "HTTP/1.1 200 OK\r\n"
@@ -126,6 +126,7 @@ void* client_handler(void* data) {
 	FILE* fp = NULL;
 	SOCKET socket = client->socket;
 	free(client);
+
 	char buffer[MAX_REQ_SIZE] = { 0 }; // a buffer to hold the received request from the client
 	char* method[30] = { 0 }; // the request's method
 	char service[MAX_REQ_SIZE] = { 0 }; // the requested file
@@ -141,9 +142,9 @@ void* client_handler(void* data) {
 	int valread = 0; // used to store values from read/recv functions.
 	int serviceIndex = 0; // used in getReqMethod. Signifies the start of the service.
 	int fSize = 0; // file size
-	int is404 = 0; // boolean that signifies if request is 404 error or not.
+	char is404 = 0; // boolean that signifies if request is 404 error or not.
 	if ((valread = recv(socket, buffer, MAX_REQ_SIZE - 1, 0)) <= 0) { //receive from client
-		end_function(client, "RECV FUCKED", fp);
+		end_function(client, "RECV FAILED", fp);
 		fprintf(stdout, "%d\n", valread);
 		ExitThread(1);
 		return NULL;
@@ -152,7 +153,7 @@ void* client_handler(void* data) {
 
 	getReqMethod(buffer, method, &serviceIndex); // get method from the request.
 	if (strcmp(method, GET)) { // validate method
-		end_function(client, "GET FUCKED", fp);
+		end_function(client, "GET FAILED", fp);
 		ExitThread(1);
 		return NULL;
 
@@ -162,7 +163,7 @@ void* client_handler(void* data) {
 
 	if (service[strlen(service) - 1] == '\\') { //if the request doesnt end with a file, we send index.html.
 		strcat(service, INDEX_HTML);
-	}
+	}	
 
 	strcat(path, service); // add the requested service to the root path.
 	fprintf(stdout, "%s\n", path);
@@ -187,7 +188,7 @@ void* client_handler(void* data) {
 		else
 			finalSize = OKsize + CTsize + contentTypeLen + CHARSETsize + CLENsize + fSizeSize + 3 * RNsize; // calculate the combined size of all variables.
 		if ((response = (char*)malloc(finalSize + 1)) == NULL) { // malloc for response.
-			end_function(socket, "MALLOC FUCKED", fp);
+			end_function(socket, "MALLOC FAILED", fp);
 			ExitThread(1);
 			return NULL;
 
@@ -197,7 +198,7 @@ void* client_handler(void* data) {
 	else {// if "text" isnt in content-type
 		finalSize = OKsize + CTsize + contentTypeLen + CLENsize + fSizeSize + 3 * RNsize; // calculate the combined size of all variables.
 		if ((response = (char*)malloc(finalSize + 1)) == NULL) { // malloc for response.
-			end_function(socket, "MALLOC FUCKED", fp);
+			end_function(socket, "MALLOC FAILED", fp);
 			ExitThread(1);
 			return NULL;
 
@@ -206,13 +207,13 @@ void* client_handler(void* data) {
 	}
 
 	send(socket, response, finalSize, 0); // SEND to client the header response
-
+	fprintf(stdout, "%s\n",response);
 	while ((valread = fread(fBuffer, sizeof(char), READ_SIZE, fp)) > 0) {
 
 		if (send(socket, fBuffer, valread, 0) == -1) {// SEND to client the file in fragments.
 			free(response);
 			free(extension);
-			end_function(socket, "SEND FUCKED", fp);
+			end_function(socket, "SEND FAILED", fp);
 			ExitThread(1);
 			return NULL;
 		}
@@ -230,7 +231,7 @@ int main(int argc, char** argv) {
 	WSADATA wsa_data; // needed in order to use sockets in windows.
 
 	if (WSAStartup(MAKEWORD(2, 2), &wsa_data)) { // start the window socket application
-		perror("SETUP FUCKED"); exit(1);
+		perror("SETUP FAILED"); exit(1);
 	}
 
 	SOCKET server_socket; // socket for the server.
@@ -252,7 +253,7 @@ int main(int argc, char** argv) {
 	}
 
 	if ((server_socket = socket(server_addr->ai_family, server_addr->ai_socktype, server_addr->ai_protocol)) <= 1) {
-		perror("SOCKET SUCKS ASS");
+		perror("SOCKET FAILED");
 		exit(1);
 	}
 	if (server_socket == INVALID_SOCKET) {
@@ -271,7 +272,7 @@ int main(int argc, char** argv) {
 	}
 	printf("all good!\n");
 	if (listen(server_socket, BACKLOG) < 0) {
-		perror("LISTEN FUCKED");
+		perror("LISTEN FAILED");
 		exit(1);
 	}
 	while (1) {
@@ -282,7 +283,7 @@ int main(int argc, char** argv) {
 
 			clientPtr client = (clientPtr)malloc(sizeof(client_t));
 			if (!client) { // validate malloc.
-				perror("MALLOC FUCKED!");
+				perror("MALLOC FAILED!");
 				continue;
 			}
 			fprintf(stdout, "NEW CLIENT!!!  :%llu\n", client_socket);
