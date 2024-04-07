@@ -59,8 +59,11 @@ char* getReqMethod(char* req, char* method, int* index) {
 char* getReqService(char* req, char* service) {
 
 	int i = 0;
-	while (req[i] != ' ') {
-		if (req[i] == '/')	service[i] = '\\';
+	while (req[i] != ' ' /*&& req[i]!='.'*/) {
+		if (req[i] == '/') { 
+			service[i] = '\\'; 
+			if (i - 1 >= 0 && req[i - 1] == '.') return "doesnt_exist.html"; // if they try to access a local file, return a nonexistent file so the response is 404.
+		}
 		else service[i] = req[i];
 		i++;
 	}
@@ -150,7 +153,7 @@ void* client_handler(void* data) {
 		return NULL;
 
 	}
-
+	puts(buffer);
 	getReqMethod(buffer, method, &serviceIndex); // get method from the request.
 	if (strcmp(method, GET)) { // validate method
 		end_function(client, "GET FAILED", fp);
@@ -176,6 +179,7 @@ void* client_handler(void* data) {
 	fseek(fp, 0, SEEK_END); // go to end of file.
 	fSize = ftell(fp); // compare value of beginning and end of file to get the size.
 	fseek(fp, 0, SEEK_SET); // go back to start of file.
+	
 
 	extension = getFileExtension(path); // get the extension from the requested service.
 	contentType = getContentTypeByExtension(extension); // get the appropriate content-type response according to the file extension.
@@ -222,7 +226,7 @@ void* client_handler(void* data) {
 
 	free(response);
 	free(extension);
-	end_function(socket, "\nGOOD JOB!!!!", fp);
+	end_function(socket, "GOOD JOB!!!!\n", fp);
 	ExitThread(1);
 	return NULL;
 }
@@ -276,7 +280,7 @@ int main(int argc, char** argv) {
 		exit(1);
 	}
 	while (1) {
-
+			
 		SOCKET client_socket;
 
 		if ((client_socket = accept(server_socket, NULL, NULL)) != INVALID_SOCKET) {
